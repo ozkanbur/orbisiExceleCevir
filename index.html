@@ -23,7 +23,7 @@
 <div class="container">
     <header>
         <h1>📊 İstif Ebat Listesi PDF → Excel</h1>
-        <p>Orijinal Yapı + Birleştirilmiş Hücreler + Formüller Korunur</p>
+        <p>Formüller + Birleştirilmiş Hücreler + Kenar Çizgileri + Orijinal Yapı</p>
     </header>
     <div class="content">
         <div id="dropZone">
@@ -58,7 +58,7 @@
         const file = fileInput.files[0];
         if (!file) return status.textContent = '❌ Lütfen PDF seçin veya sürükleyin.';
 
-        status.textContent = '📄 PDF okunuyor...';
+        status.textContent = '📄 PDF işleniyor...';
         const arrayBuffer = await file.arrayBuffer();
 
         try {
@@ -72,7 +72,7 @@
 
             const parsed = parseIstifPDF(fullText);
             if (parsed.success) {
-                generateExcelWithMerges(parsed.data, file.name.replace('.pdf', '_ebat_listesi.xlsx'));
+                generateExactExcel(parsed.data, file.name.replace('.pdf', '_ebat_listesi.xlsx'));
                 status.innerHTML = `✅ <strong>${parsed.data.istifNo}</strong> başarıyla dönüştürüldü!`;
                 status.className = 'success';
             } else {
@@ -92,16 +92,19 @@
             rows: []
         };
 
+        // Boyları bul
         const boyMatches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*metre?/gi)];
         data.boylar = [...new Set(boyMatches.map(m => m[1]))].sort((a,b) => parseFloat(a) - parseFloat(b));
 
+        // Satırları parse et
         const rowRegex = /(\d{2,3})\s+(\d+)\s+([\d,]+)/g;
         let match;
         while ((match = rowRegex.exec(text)) !== null) {
-            const cap = match[1];
-            const adet = parseInt(match[2]);
-            const m3 = parseFloat(match[3].replace(',', '.'));
-            data.rows.push({cap, adet, m3});
+            data.rows.push({
+                cap: match[1],
+                adet: parseInt(match[2]),
+                m3: parseFloat(match[3].replace(',', '.'))
+            });
         }
 
         const toplamMatch = text.match(/TOPLAM.*?(\d+)\s+([\d,]+)/i);
@@ -113,11 +116,11 @@
         return {success: data.rows.length > 0, data};
     }
 
-    function generateExcelWithMerges(data, filename) {
+    function generateExactExcel(data, filename) {
         const wb = XLSX.utils.book_new();
         const wsData = [];
 
-        // Orijinal yapıya birebir yakın
+        // Başlık bloğu (orijinal ile birebir)
         wsData.push(["", "", "", "", "SATIŞA  ÇIKARILAN  EMVALİN                                                               EBAT LİSTESİ"]);
         wsData.push(["İşletme Mdr.  :", "", 0, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "GENEL TOPLAM"]);
         wsData.push(["İşletme Şefliği    :", "", 0]);
@@ -125,17 +128,19 @@
         wsData.push(["İSTİF NO       :", "", data.istifNo, "", "", "", "", "", "", "", "", "", "", "", "Parti  No:", "", "", "", "", data.toplamAdet, data.toplamM3]);
         wsData.push(["KUTUR", "B  O  Y  L  A  R"]);
 
-        // Dinamik Boy Başlıkları
+        // Boy başlıkları
         const boyHeader = ["", ...data.boylar.flatMap(b => [b, ""])];
         wsData.push(boyHeader);
         const subHeader = ["", ...data.boylar.flatMap(() => ["ADET", "M3 DM3"])];
         wsData.push(subHeader);
 
-        // Veri satırları
-        data.rows.forEach(row => {
+        // Veri satırları + Formüller
+        data.rows.forEach((row, idx) => {
             const excelRow = [row.cap];
-            data.boylar.forEach(() => {
-                excelRow.push(row.adet || "", ""); // M3 formül eklenebilir
+            data.boylar.forEach((boy, bIdx) => {
+                const col = String.fromCharCode(67 + bIdx * 2); // C, E, G...
+                const rowNum = idx + 10;
+                excelRow.push(row.adet || "", {f: `=IF(${col}${rowNum}="","",ROUND(${col}${rowNum}*0.1*PI()*(B${rowNum}/2)^2*${boy},0))`, t: 'n'});
             });
             excelRow.push(row.adet, "");
             wsData.push(excelRow);
@@ -149,15 +154,24 @@
 
         const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-        // Birleştirilmiş hücreler (orijinal Excel'den)
+        // Birleştirilmiş hücreler
         ws['!merges'] = [
-            {s: {r:0, c:4}, e: {r:0, c:20}},   // Başlık
-            {s: {r:1, c:20}, e: {r:1, c:21}},  // Genel Toplam
-            {s: {r:4, c:20}, e: {r:4, c:21}}   // Toplam adet/m3
+            {s: {r:0, c:4}, e: {r:0, c:20}},
+            {s: {r:1, c:20}, e: {r:1, c:21}},
+            {s: {r:4, c:20}, e: {r:4, c:21}}
         ];
 
-        ws['!cols'] = Array(30).fill({wch: 12});
+        // Kenar çizgileri (basit stil)
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        for (let R = range.s.r; R <= range.e.r; R++) {
+            for (let C = range.s.c; C <= range.e.c; C++) {
+                const cell = XLSX.utils.encode_cell({r: R, c: C});
+                if (!ws[cell]) ws[cell] = {v: ""};
+                ws[cell].s = { border: { top: {style: "thin"}, bottom: {style: "thin"}, left: {style: "thin"}, right: {style: "thin"} } };
+            }
+        }
 
+        ws['!cols'] = Array(30).fill({wch: 12});
         XLSX.utils.book_append_sheet(wb, ws, "Sayfa1 (2)");
         XLSX.writeFile(wb, filename);
     }

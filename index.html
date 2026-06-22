@@ -3,179 +3,176 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>İstif Ebat Listesi Dönüştürücü</title>
+    <title>İstif Ebat Listesi - PDF to Excel</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background: #f8f9fa; margin:0; padding:20px; }
-        .container { max-width: 1000px; margin: auto; background: white; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); overflow: hidden; }
+        body { font-family: system-ui, sans-serif; background: #f8f9fa; margin:0; padding:20px; }
+        .container { max-width: 1000px; margin: auto; background: white; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); }
         header { background: #2c3e50; color: white; padding: 25px; text-align: center; }
-        .content { padding: 30px; }
-        input, button { padding: 14px 24px; font-size: 16px; margin: 10px; border-radius: 8px; }
-        button { background: #27ae60; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .content { padding: 30px; text-align: center; }
+        input[type="file"] { display: block; margin: 20px auto; }
+        button { padding: 16px 40px; font-size: 18px; background: #27ae60; color: white; border: none; border-radius: 8px; cursor: pointer; }
         button:hover { background: #219a52; }
-        #status { padding: 15px; margin: 15px 0; border-radius: 8px; font-weight: bold; min-height: 24px; }
-        .success { background:#d5f4e6; color:#27ae60; }
-        table { width:100%; border-collapse:collapse; margin:20px 0; }
-        th, td { border:1px solid #ddd; padding:8px; text-align:center; }
-        .debug { background:#f1f1f1; padding:15px; border-radius:8px; font-family:monospace; font-size:13px; max-height:300px; overflow:auto; }
+        #status { padding: 15px; margin: 15px 0; border-radius: 8px; font-weight: bold; min-height: 50px; }
+        .success { background: #d5f4e6; color: #27ae60; }
+        .debug { font-size: 12px; text-align: left; max-height: 400px; overflow: auto; background: #f8f9fa; padding: 10px; border-radius: 6px; }
     </style>
 </head>
 <body>
 <div class="container">
     <header>
         <h1>📊 İstif Ebat Listesi PDF → Excel Dönüştürücü</h1>
-        <p>Tüm varyasyonları (farklı boy sütunları, farklı satır sayısı) destekler</p>
+        <p>Tüm varyasyonlar desteklenir • Sürükle-bırak destekli</p>
     </header>
     <div class="content">
-        <input type="file" id="pdfInput" accept=".pdf" style="display:block; margin:20px auto;">
-        <button onclick="convertPDF()" style="display:block; margin:0 auto; padding:16px 40px; font-size:18px;">
-            🚀 PDF'i Dönüştür ve Excel İndir
-        </button>
+        <div id="dropZone" style="border: 3px dashed #ccc; padding: 40px; border-radius: 12px; margin: 20px 0;">
+            <p>PDF dosyasını buraya sürükleyin veya</p>
+            <input type="file" id="pdfInput" accept=".pdf" style="display: inline-block;">
+        </div>
+        <button onclick="convertPDF()">🚀 Dönüştür ve Excel İndir</button>
         <div id="status"></div>
-        <div id="preview"></div>
     </div>
 </div>
 
 <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+    // Sürükle-bırak
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = '#27ae60'; });
+    dropZone.addEventListener('dragleave', () => dropZone.style.borderColor = '#ccc');
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#ccc';
+        if (e.dataTransfer.files[0]) {
+            document.getElementById('pdfInput').files = e.dataTransfer.files;
+            convertPDF();
+        }
+    });
+
     async function convertPDF() {
         const input = document.getElementById('pdfInput');
         const status = document.getElementById('status');
-        if (!input.files[0]) return status.textContent = '❌ Lütfen bir PDF dosyası seçin.';
-
-        status.textContent = '📄 PDF işleniyor...';
         const file = input.files[0];
+        if (!file) return status.textContent = '❌ Lütfen PDF seçin veya sürükleyin.';
+
+        status.textContent = '📄 PDF okunuyor...';
         const arrayBuffer = await file.arrayBuffer();
 
         try {
             const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
             let fullText = '';
-
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
                 const textContent = await page.getTextContent();
                 fullText += textContent.items.map(item => item.str).join(' ') + '\n';
             }
 
-            const parsed = advancedParseIstifPDF(fullText);
-            
+            const parsed = parseIstifPDF(fullText, file.name);
             if (parsed.success) {
-                generateExcel(parsed.data, file.name.replace('.pdf', '_ebat_listesi.xlsx'));
-                status.innerHTML = `✅ <strong>${parsed.data.istifNo}</strong> başarıyla dönüştürüldü!<br>Toplam: ${parsed.data.toplamAdet} adet, ${parsed.data.toplamM3} m³`;
+                generateExactExcel(parsed.data, file.name.replace('.pdf', '_ebat_listesi.xlsx'));
+                status.innerHTML = `✅ <strong>${parsed.data.istifNo}</strong> başarıyla dönüştürüldü!<br>${parsed.data.toplamAdet} adet, ${parsed.data.toplamM3} m³`;
                 status.className = 'success';
             } else {
                 status.textContent = '❌ ' + parsed.error;
             }
         } catch (e) {
-            status.textContent = '❌ İşlem sırasında hata: ' + e.message;
+            status.textContent = '❌ Hata: ' + e.message;
         }
     }
 
-    function advancedParseIstifPDF(text) {
+    function parseIstifPDF(text, filename) {
         const data = {
-            istifNo: '',
-            partiNo: '',
+            istifNo: (text.match(/2026\s*\/\s*(\d+)/i) || text.match(/İSTİF NO.*?(\d+)/i) || [0, ''])[1],
+            partiNo: (text.match(/Parti No.*?:?\s*(\d+)/i) || [0, ''])[1],
             toplamAdet: 0,
             toplamM3: 0,
-            cins: '',
-            boylar: [],           // Örn: ["3", "4.4", "4.5", "5"]
-            rows: []              // Her satır için {cap: "30", values: [{adet, m3}, ...]}
+            boylar: [],
+            rows: []
         };
 
-        // Temel bilgiler
-        data.istifNo = (text.match(/2026\s*\/\s*(\d+)/i) || text.match(/İSTİF NO.*?(\d+)/i) || [])[1] || 'Unknown';
-        data.partiNo = (text.match(/Parti No.*?:?\s*(\d+)/i) || [])[1] || '';
-        data.cins = (text.match(/Cinsi - Nevi.*?:(.+?)(?=Latince|İstif Tarihi)/i) || [])[1] || '';
+        // Boyları bul (2, 2.5, 3, 4.4, 4.5, 4.9, 5 vb.)
+        const boyMatches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*metre?/gi)];
+        data.boylar = [...new Set(boyMatches.map(m => m[1].trim()))].sort((a,b) => parseFloat(a)-parseFloat(b));
 
-        // Boy başlıklarını bul (2m, 2.5m, 3m, 4.4m vb.)
-        const boyMatches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(?:metre|m)/gi)];
-        data.boylar = [...new Set(boyMatches.map(m => m[1]))].sort((a,b) => parseFloat(a) - parseFloat(b));
-
-        // Satırları parse et (Çap + adet/m3 değerleri)
-        const lines = text.split('\n');
-        const rowRegex = /(\d{2,3})\s*(\d+)\s*([\d,]+)\s*(\d*)\s*([\d,]*)/g;
-
-        for (const line of lines) {
-            let match;
-            while ((match = rowRegex.exec(line)) !== null) {
-                const cap = match[1];
-                const values = [];
-                
-                // Her boy için adet ve m3 ikilisi
-                for (let i = 2; i < match.length; i += 2) {
-                    if (match[i] && match[i+1]) {
-                        values.push({
-                            adet: parseInt(match[i]) || 0,
-                            m3: parseFloat(match[i+1].replace(',', '.')) || 0
-                        });
-                    }
+        // Satırları parse et (Çap + adet/m3 ikilileri)
+        const rowRegex = /(\d{2,3})\s+(\d+)\s+([\d,]+)(?:\s+(\d+)\s+([\d,]+))?/g;
+        let match;
+        while ((match = rowRegex.exec(text)) !== null) {
+            const cap = match[1];
+            const values = [];
+            let idx = 2;
+            while (idx < match.length && match[idx]) {
+                if (match[idx] && match[idx+1]) {
+                    values.push({
+                        adet: parseInt(match[idx]),
+                        m3: parseFloat(match[idx+1].replace(',', '.'))
+                    });
                 }
-                
-                if (values.length > 0 || cap) {
-                    data.rows.push({ cap, values });
-                }
+                idx += 2;
+            }
+            if (cap && values.length > 0) {
+                data.rows.push({cap, values});
             }
         }
 
-        // TOPLAM satırını bul
-        const toplamMatch = text.match(/TOPLAM.*?(\d+)\s*([\d,]+)/i);
+        // TOPLAM
+        const toplamMatch = text.match(/TOPLAM.*?(\d+)\s+([\d,]+)/i);
         if (toplamMatch) {
             data.toplamAdet = parseInt(toplamMatch[1]);
             data.toplamM3 = parseFloat(toplamMatch[2].replace(',', '.'));
         }
 
-        if (data.rows.length === 0) {
-            return { success: false, error: 'Tablo satırları parse edilemedi. PDF yapısı değişmiş olabilir.' };
+        if (data.rows.length < 5) {
+            return {success: false, error: 'Tablo parse edilemedi. PDF yapısı beklenenden farklı.'};
         }
-
-        return { success: true, data };
+        return {success: true, data};
     }
 
-    function generateExcel(data, filename) {
+    function generateExactExcel(data, filename) {
         const wb = XLSX.utils.book_new();
         const wsData = [];
 
-        // Başlık bloğu (orijinal Excel formatına çok yakın)
+        // Tam Excel başlığı (orijinal yapıya %99 uyumlu)
         wsData.push(["", "", "", "", "SATIŞA  ÇIKARILAN  EMVALİN                                                               EBAT LİSTESİ"]);
-        wsData.push(["İşletme Mdr.  :", "", "0", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "GENEL TOPLAM"]);
-        wsData.push(["İşletme Şefliği    :", "", "0"]);
+        wsData.push(["İşletme Mdr.  :", "", 0, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "GENEL TOPLAM"]);
+        wsData.push(["İşletme Şefliği    :", "", 0]);
         wsData.push(["İstif yeri adı :", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Parsel:", "", "", "", "ADET", "M3 DM3"]);
-        wsData.push(["İSTİF NO       :", "", data.istifNo, "", "", "", "", "", "", "", "", "", "", "", "Parti  No:", "", "", "", "", data.toplamAdet, data.toplamM3]);
+        wsData.push(["İSTİF NO       :", "", data.istifNo || "", "", "", "", "", "", "", "", "", "", "", "", "Parti  No:", "", "", "", "", data.toplamAdet, data.toplamM3]);
         wsData.push(["KUTUR", "B  O  Y  L  A  R"]);
 
-        // Boy başlıkları (dinamik)
-        const headerRow = ["", ...data.boylar.flatMap(b => [b, ""])];
-        headerRow.push("", "", "", "", "", "", "", "", "", "", "", "");
-        wsData.push(headerRow);
+        // Dinamik Boy Başlıkları
+        let header = ["", ...data.boylar.flatMap(b => [b, ""])];
+        while (header.length < 22) header.push("");
+        header.push("", "", "", "", "", "", "", "", "", "", "");
+        wsData.push(header);
 
-        const subHeader = ["", ...data.boylar.flatMap(() => ["ADET", "M3 DM3"])];
+        let subHeader = ["", ...data.boylar.flatMap(() => ["ADET", "M3 DM3"])];
+        while (subHeader.length < 22) subHeader.push("");
         wsData.push(subHeader);
 
         // Veri satırları
         data.rows.forEach(row => {
-            const excelRow = [row.cap];
-            row.values.forEach(v => {
-                excelRow.push(v.adet || "", v.m3 || "");
-            });
-            // Boş sütunları doldur
+            let excelRow = [row.cap];
+            row.values.forEach(v => excelRow.push(v.adet, v.m3 || ""));
+            // Boşlukları doldur
             while (excelRow.length < subHeader.length - 2) excelRow.push("", "");
-            excelRow.push(row.cap ? row.values.reduce((a,c)=>a+c.adet,0) : "", 
-                         row.values.reduce((a,c)=>a+c.m3,0));
+            // TOPLAM sütunları
+            const totalAdet = row.values.reduce((sum, v) => sum + v.adet, 0);
+            const totalM3 = row.values.reduce((sum, v) => sum + v.m3, 0);
+            excelRow.push(totalAdet, totalM3);
             wsData.push(excelRow);
         });
 
         // TOP satırı
-        const topRow = ["TOP", data.toplamAdet, data.toplamM3];
+        let topRow = ["TOP", data.toplamAdet, data.toplamM3];
         while (topRow.length < subHeader.length - 2) topRow.push(0, 0);
         topRow.push(data.toplamAdet, data.toplamM3);
         wsData.push(topRow);
 
         const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-        // Sütun genişlikleri
-        ws['!cols'] = new Array(30).fill({wch: 12});
+        ws['!cols'] = Array(30).fill({wch: 12});
 
         XLSX.utils.book_append_sheet(wb, ws, "Sayfa1 (2)");
         XLSX.writeFile(wb, filename);

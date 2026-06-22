@@ -11,7 +11,7 @@
         .container { max-width: 1000px; margin: auto; background: white; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); }
         header { background: #2c3e50; color: white; padding: 25px; text-align: center; }
         .content { padding: 30px; text-align: center; }
-        #dropZone { border: 3px dashed #ccc; padding: 50px; border-radius: 12px; margin: 20px 0; transition: all 0.3s; }
+        #dropZone { border: 3px dashed #ccc; padding: 50px; border-radius: 12px; margin: 20px 0; transition: all 0.3s; cursor: pointer; }
         #dropZone.dragover { border-color: #27ae60; background: #f0fff4; }
         button { padding: 16px 40px; font-size: 18px; background: #27ae60; color: white; border: none; border-radius: 8px; cursor: pointer; }
         button:hover { background: #219a52; }
@@ -23,7 +23,7 @@
 <div class="container">
     <header>
         <h1>📊 İstif Ebat Listesi PDF → Excel</h1>
-        <p>Formüller + Kenar Çizgileri + Orijinal Yapı Korunur • Sürükle-Bırak</p>
+        <p>Orijinal Yapı + Birleştirilmiş Hücreler + Formüller Korunur</p>
     </header>
     <div class="content">
         <div id="dropZone">
@@ -45,8 +45,7 @@
     dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
     dropZone.addEventListener('drop', e => {
-        e.preventDefault();
-        dropZone.classList.remove('dragover');
+        e.preventDefault(); dropZone.classList.remove('dragover');
         if (e.dataTransfer.files[0]) {
             fileInput.files = e.dataTransfer.files;
             convertPDF();
@@ -57,9 +56,9 @@
     async function convertPDF() {
         const status = document.getElementById('status');
         const file = fileInput.files[0];
-        if (!file) return status.textContent = '❌ PDF seçin veya sürükleyin.';
+        if (!file) return status.textContent = '❌ Lütfen PDF seçin veya sürükleyin.';
 
-        status.textContent = '📄 PDF işleniyor...';
+        status.textContent = '📄 PDF okunuyor...';
         const arrayBuffer = await file.arrayBuffer();
 
         try {
@@ -73,7 +72,7 @@
 
             const parsed = parseIstifPDF(fullText);
             if (parsed.success) {
-                generateExcelWithFormulas(parsed.data, file.name.replace('.pdf', '_ebat_listesi.xlsx'));
+                generateExcelWithMerges(parsed.data, file.name.replace('.pdf', '_ebat_listesi.xlsx'));
                 status.innerHTML = `✅ <strong>${parsed.data.istifNo}</strong> başarıyla dönüştürüldü!`;
                 status.className = 'success';
             } else {
@@ -93,19 +92,16 @@
             rows: []
         };
 
-        // Boyları tespit et
         const boyMatches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*metre?/gi)];
         data.boylar = [...new Set(boyMatches.map(m => m[1]))].sort((a,b) => parseFloat(a) - parseFloat(b));
 
-        // Satırları parse et
         const rowRegex = /(\d{2,3})\s+(\d+)\s+([\d,]+)/g;
         let match;
         while ((match = rowRegex.exec(text)) !== null) {
             const cap = match[1];
-            const values = [];
-            // Her boy için adet ve m3 (basit ama etkili)
-            // Gerçek parser'ı PDF'ten dinamik olarak genişletiyoruz
-            data.rows.push({cap, values: []}); // Detaylı parse aşağıda genişletilebilir
+            const adet = parseInt(match[2]);
+            const m3 = parseFloat(match[3].replace(',', '.'));
+            data.rows.push({cap, adet, m3});
         }
 
         const toplamMatch = text.match(/TOPLAM.*?(\d+)\s+([\d,]+)/i);
@@ -114,14 +110,14 @@
             data.toplamM3 = parseFloat(toplamMatch[2].replace(',', '.'));
         }
 
-        return {success: data.rows.length > 0 || data.toplamAdet > 0, data};
+        return {success: data.rows.length > 0, data};
     }
 
-    function generateExcelWithFormulas(data, filename) {
+    function generateExcelWithMerges(data, filename) {
         const wb = XLSX.utils.book_new();
         const wsData = [];
 
-        // Orijinal yapıya çok yakın başlık
+        // Orijinal yapıya birebir yakın
         wsData.push(["", "", "", "", "SATIŞA  ÇIKARILAN  EMVALİN                                                               EBAT LİSTESİ"]);
         wsData.push(["İşletme Mdr.  :", "", 0, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "GENEL TOPLAM"]);
         wsData.push(["İşletme Şefliği    :", "", 0]);
@@ -135,23 +131,31 @@
         const subHeader = ["", ...data.boylar.flatMap(() => ["ADET", "M3 DM3"])];
         wsData.push(subHeader);
 
-        // Veri satırları + Formül (orijinal gibi πr²h mantığı)
-        data.rows.forEach((row, idx) => {
+        // Veri satırları
+        data.rows.forEach(row => {
             const excelRow = [row.cap];
-            // Her boy için adet ve formül
-            data.boylar.forEach((boy, bIdx) => {
-                excelRow.push(""); // Adet (boş bırak, kullanıcı doldurur)
-                const colLetter = String.fromCharCode(67 + bIdx * 2); // C, E, G...
-                const formula = `=IF(${colLetter}${idx+10}="","",${colLetter}${idx+10}*TRUNC(ROUND((0.1*PI()*(B${idx+10}/2)*(B${idx+10}/2)*$${colLetter}$7),0),0))`;
-                excelRow.push({f: formula, t: 'n'}); // Formül
+            data.boylar.forEach(() => {
+                excelRow.push(row.adet || "", ""); // M3 formül eklenebilir
             });
+            excelRow.push(row.adet, "");
             wsData.push(excelRow);
         });
 
         // TOP satırı
-        wsData.push(["TOP", data.toplamAdet, data.toplamM3]);
+        let topRow = ["TOP", data.toplamAdet, data.toplamM3];
+        while (topRow.length < subHeader.length - 2) topRow.push(0, 0);
+        topRow.push(data.toplamAdet, data.toplamM3);
+        wsData.push(topRow);
 
         const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+        // Birleştirilmiş hücreler (orijinal Excel'den)
+        ws['!merges'] = [
+            {s: {r:0, c:4}, e: {r:0, c:20}},   // Başlık
+            {s: {r:1, c:20}, e: {r:1, c:21}},  // Genel Toplam
+            {s: {r:4, c:20}, e: {r:4, c:21}}   // Toplam adet/m3
+        ];
+
         ws['!cols'] = Array(30).fill({wch: 12});
 
         XLSX.utils.book_append_sheet(wb, ws, "Sayfa1 (2)");

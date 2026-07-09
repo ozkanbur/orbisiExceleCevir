@@ -124,6 +124,7 @@ function diaToRow(d){
 
 // Length columns: C,E,G,I,K,M,O (0-indexed for array, column letters for XML)
 const LEN_COLS=['C','E','G','I','K','M','O'];
+const M3_LETTERS=['D','F','H','J','L','N','P'];
 
 // ── State ──
 let parsedData=null, excelBuffer=null;
@@ -268,6 +269,19 @@ function clearCellNum(xml, ref) {
     function(_, a) { return '<c r="' + ref + '"' + stripT(a) + '/>'; });
   return xml;
 }
+function setCachedVal(xml, ref, value) {
+  // Sets the cached <v> tag inside a formula cell without touching <f>.
+  // Required so SheetJS (used by the 2nd app) can read computed values
+  // without recalculating formulas.
+  const r = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const vTag = (value !== null && value !== undefined) ? `<v>${value}</v>` : '<v></v>';
+  return xml.replace(
+    new RegExp('<c r="' + r + '"([^>]*)><f([^>]*)>([^<]*)<\\/f><v>[^<]*<\\/v>'),
+    (_, attrs, fAttrs, formula) =>
+      `<c r="${ref}"${attrs}><f${fAttrs}>${formula}</f>${vTag}`
+  );
+}
+
 
 
 // ────────────────────────────────────────────────────────
@@ -304,6 +318,22 @@ async function generateExcel(data) {
     if(!er) continue;
     for(let i=0;i<data.lengths.length&&i<7;i++){
       if(row.counts[i]>0) xml=setCellNum(xml,LEN_COLS[i]+er,row.counts[i]);
+    }
+  }
+
+
+  // ── E. Embed M3 formula cached values ──
+  // SheetJS reads <v> (cached value) not the formula itself.
+  // Without this, the 2nd app sees volume = 0 for all rows.
+  for(const row of data.rows){
+    const er=diaToRow(row.dia);
+    if(!er) continue;
+    for(let i=0;i<data.lengths.length&&i<7;i++){
+      const adet=row.counts[i];
+      if(adet>0){
+        const perPiece=Math.round(0.1*Math.PI*(row.dia/2)*(row.dia/2)*data.lengths[i]);
+        xml=setCachedVal(xml, M3_LETTERS[i]+er, adet*perPiece);
+      }
     }
   }
 

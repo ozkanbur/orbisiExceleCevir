@@ -583,57 +583,42 @@ function setRowHidden(xml, rowNum, hidden) {
 
 // ────────────────────────────────────────────────────────
 
+
 async function generateExcel(data) {
 
   // 1. Decode template base64 → Uint8Array
-
   const binStr = atob(TEMPLATE_B64);
-
   const bytes  = new Uint8Array(binStr.length);
-
   for(let i=0;i<binStr.length;i++) bytes[i]=binStr.charCodeAt(i);
 
-
-
-  // 2. Load zip (borders, numFmt and L14 formula already in template)
-
+  // 2. Load zip
   const zip = await JSZip.loadAsync(bytes);
-
   let xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
 
-
+  // ── A0. D2 ve D3 hücrelerini (değer ve formül) tamamen temizle ──
+  function purgeCell(xmlStr, ref) {
+    const esc = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return xmlStr.replace(new RegExp('<c r="' + esc + '"([^>]*)>([\\s\\S]*?)<\\/c>'), '<c r="' + ref + '"$1/>');
+  }
+  xml = purgeCell(xml, 'D2');
+  xml = purgeCell(xml, 'D3');
 
   // ── A. Update İstif No in D5 ──
-
   xml = setCellNum(xml, 'D5', data.istifNoNum);
 
-
-
   // ── B. Update length values in row 7 (C7,E7,G7,I7,K7,M7,O7) ──
-
   for(let i=0;i<LEN_COLS.length;i++){
-
     const ref=LEN_COLS[i]+'7';
-
     if(i<data.lengths.length) xml=setCellNum(xml,ref,data.lengths[i]);
-
     else                       xml=clearCellNum(xml,ref);
-
   }
-
-
 
   // ── C. Clear all ADET values in rows 9-97 ──
-
   for(let r=9;r<=97;r++){
-
     for(const col of LEN_COLS) xml=clearCellNum(xml,col+r);
-
   }
 
-
-
- // ── D. Fill new ADET values from parsed data ──
+  // ── D. Fill new ADET values from parsed data ──
   const filledRows = new Set();
   for(const row of data.rows){
     const er=diaToRow(row.dia);
@@ -645,62 +630,35 @@ async function generateExcel(data) {
     if(hasAny) filledRows.add(er);
   }
 
-
-
-
-
   // ── E. Embed M3 formula cached values ──
-
-  // SheetJS reads <v> (cached value) not the formula itself.
-
-  // Without this, the 2nd app sees volume = 0 for all rows.
-
   for(const row of data.rows){
-
     const er=diaToRow(row.dia);
-
     if(!er) continue;
-
     for(let i=0;i<data.lengths.length&&i<7;i++){
-
       const adet=row.counts[i];
-
       if(adet>0){
-
         const perPiece=Math.round(0.1*Math.PI*(row.dia/2)*(row.dia/2)*data.lengths[i]);
-
         xml=setCachedVal(xml, M3_LETTERS[i]+er, adet*perPiece);
-
       }
-
     }
-
   }
 
-  // ── F. Hacim toplamı (T) 0/boş olan satırları gizle ──
+  // ── F. Hacim toplamı 0/boş olan satırları gizle ──
   for(let r=9;r<=97;r++){
     xml = setRowHidden(xml, r, !filledRows.has(r));
   }
 
   // 3. Save modified worksheet back
-
   zip.file('xl/worksheets/sheet1.xml', xml);
-
   zip.remove('xl/calcChain.xml'); // force Excel to recalculate
 
-
-
   // 4. Generate output buffer
-
   const outBuffer = await zip.generateAsync({
-
     type:'uint8array', compression:'DEFLATE', compressionOptions:{level:6}
-
   });
-
   return outBuffer;
-
 }
+
 
 
 
